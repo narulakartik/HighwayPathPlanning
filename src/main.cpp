@@ -7,7 +7,7 @@
 #include "Eigen-3.3/Eigen/QR"
 #include "helpers.h"
 #include "json.hpp"
-
+#include "spline.h"
 // for convenience
 using nlohmann::json;
 using std::string;
@@ -22,7 +22,8 @@ int main() {
   vector<double> map_waypoints_s;
   vector<double> map_waypoints_dx;
   vector<double> map_waypoints_dy;
-
+ 
+  
   // Waypoint map to read from
   string map_file_ = "../data/highway_map.csv";
   // The max s value before wrapping around the track back to 0
@@ -68,7 +69,9 @@ int main() {
         
         if (event == "telemetry") {
           // j[1] is the data JSON object
-          
+          int lane=1;
+           
+  		  int ref_vel=49.5;
           // Main car's localization Data
           double car_x = j[1]["x"];
           double car_y = j[1]["y"];
@@ -76,7 +79,7 @@ int main() {
           double car_d = j[1]["d"];
           double car_yaw = j[1]["yaw"];
           double car_speed = j[1]["speed"];
-
+          
           // Previous path data given to the Planner
           auto previous_path_x = j[1]["previous_path_x"];
           auto previous_path_y = j[1]["previous_path_y"];
@@ -87,7 +90,72 @@ int main() {
           // Sensor Fusion Data, a list of all other cars on the same side 
           //   of the road.
           auto sensor_fusion = j[1]["sensor_fusion"];
-
+		  int prev_size= previous_path_x.size();
+         
+          vector <double> ptsx;
+          vector <double> ptsy;
+          double ref_x=car_x;
+          double ref_y=car_y;
+          double ref_yaw= deg2rad(car_yaw);
+          
+          if(prev_size<2)
+          {
+            double prev_x=car_x-cos(car_yaw);
+            double prev_y=car_y-sin(car_yaw);
+            ptsx.push_back(prev_x);
+            ptsy.push_back(prev_y);
+            ptsx.push_back(car_x);
+            ptsy.push_back(car_y);
+            
+          }
+          
+          else
+          {
+            ref_x=previous_path_x[prev_size-1];
+            ref_y=previous_path_y[prev_size-1];
+            
+            
+            double ref_x_prev=previous_path_x[prev_size-2];
+            double ref_y_prev=previous_path_y[prev_size-2];
+            ref_yaw=atan2(ref_y-ref_y_prev, ref_x-ref_x_prev);
+            
+            
+            
+            ptsx.push_back(ref_x_prev);
+            ptsy.push_back(ref_y_prev);
+            ptsx.push_back(ref_x);
+            ptsy.push_back(ref_y);
+          }
+          
+    	  vector <double> next_wp0=getXY(car_s+30,(2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+          vector <double> next_wp1=getXY(car_s+60,(2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+          vector <double> next_wp2=getXY(car_s+90,(2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+          
+          ptsx.push_back(next_wp0[0]);
+          ptsy.push_back(next_wp0[1]);
+          ptsx.push_back(next_wp1[0]);
+          ptsy.push_back(next_wp1[1]);
+          ptsx.push_back(next_wp2[0]); 
+          ptsy.push_back(next_wp2[1]);
+          
+         
+        
+         
+          
+          
+          for(int i=0; i<ptsx.size(); i++)
+          {
+            double shiftx=ptsx[i]-ref_x;
+            double shifty=ptsy[i]-ref_y;
+            ptsx[i]=(shiftx*cos(0-ref_yaw)-shifty*sin(0-ref_yaw));
+            ptsy[i]=(shiftx*sin(0-ref_yaw)+shifty*cos(0-ref_yaw));
+                     
+           }
+                     
+          tk::spline s;
+          s.set_points(ptsx, ptsy);
+            
+            
           json msgJson;
 
           vector<double> next_x_vals;
@@ -97,8 +165,39 @@ int main() {
            * TODO: define a path made up of (x,y) points that the car will visit
            *   sequentially every .02 seconds
            */
-
-
+          for(int i=0; i<previous_path_x.size(); i++)
+          {
+            next_x_vals.push_back(previous_path_x[i]);
+            next_y_vals.push_back(previous_path_y[i]);
+                     
+           }          
+                 
+			
+          double target_x=30;
+          double target_y=s(target_x);
+          double target_dist=sqrt(target_x*target_x+target_y*target_y);
+          double x_add=0;
+                   
+          for(int i=0; i<=50-previous_path_x.size(); i++)
+           {
+             double N=target_dist/(0.02*ref_vel/2.24);
+             double x_pt=x_add+target_x/N;
+             double y_pt=s(x_pt);
+             x_add=x_pt;
+             
+             x_pt=(ref_x*cos(ref_yaw)-ref_y*sin(ref_yaw));
+             y_pt=(ref_x*sin(ref_yaw)+ref_y*cos(ref_yaw));
+             x_pt+=ref_x;
+             y_pt+=ref_y;
+             next_x_vals.push_back(x_pt);
+             next_y_vals.push_back(y_pt);
+         
+           }
+                     
+                     
+                
+                     
+                     
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
 
